@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import { ChevronRight, Download, FileText, CheckCircle, AlertCircle, Menu, Settings, BookOpen, LayoutDashboard, Send, Loader, Edit2, Save, X } from 'lucide-react'
+import { ChevronRight, Download, FileText, CheckCircle, AlertCircle, Menu, Settings, BookOpen, LayoutDashboard, Send, Loader, Edit2, Save, X, AlertTriangle } from 'lucide-react'
 
 type Screen = 'dashboard' | 'interview' | 'draft-review' | 'final-policy'
 
@@ -183,6 +183,15 @@ const SAMPLE_CONVERSATION: ConversationMessage[] = [
   },
 ]
 
+// Agent IDs from PRD
+const AGENT_IDS = {
+  INTERVIEW: '6908ce0d5d0b2c24131786c0', // HR Policy Interview Agent
+  COMPLIANCE_RESEARCH: '6908cdf64d0da282a13412cf', // Compliance Research Agent
+  POLICY_DRAFTING: '6908ce055d0b2c24131786bf', // Policy Drafting Agent
+  COORDINATOR: '6908ce4d5d0b2c24131786c1', // Policy Generation Coordinator
+  FINALIZATION: '6908ce1cf6473313aec6dcb0', // Policy Finalization Agent
+}
+
 function Dashboard({ onStartPolicy }: { onStartPolicy: () => void }) {
   return (
     <div className="space-y-8">
@@ -271,14 +280,87 @@ function InterviewChat({
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [interviewProgress, setInterviewProgress] = useState(50)
+  const [error, setError] = useState<string | null>(null)
+  const [sessionId] = useState(`session-${Date.now()}`)
+  const [userId] = useState(`user-${Date.now()}`)
+  const [conversationHistory, setConversationHistory] = useState<Array<{role: string, content: string}>>([])
   const [gatheredInfo, setGatheredInfo] = useState<GatheredInfo>({
     policyType: 'Remote Work',
     departments: 'Engineering, Product',
     employeeLevels: 'Full-time employees',
   })
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  const handleSendMessage = () => {
-    if (!inputValue.trim()) return
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  const callInterviewAgent = async (userMessage: string) => {
+    try {
+      setError(null)
+
+      const conversationContext = {
+        user_message: userMessage,
+        conversation_history: conversationHistory,
+        gathered_information: gatheredInfo,
+      }
+
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: JSON.stringify(conversationContext),
+          agent_id: AGENT_IDS.INTERVIEW,
+          user_id: userId,
+          session_id: sessionId,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to get agent response')
+      }
+
+      const agentOutput = data.response
+      let agentMessage = typeof agentOutput === 'string' ? agentOutput : agentOutput.agent_response || JSON.stringify(agentOutput)
+
+      // Update gathered information from agent output
+      if (typeof agentOutput === 'object' && agentOutput.gathered_information) {
+        setGatheredInfo((prev) => ({
+          ...prev,
+          ...agentOutput.gathered_information,
+        }))
+        const progress = agentOutput.interview_progress || 50
+        setInterviewProgress(Math.min(progress, 100))
+      }
+
+      const agentResponse: ConversationMessage = {
+        id: Date.now().toString(),
+        sender: 'agent',
+        content: agentMessage,
+        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      }
+
+      setMessages((prev) => [...prev, agentResponse])
+      setConversationHistory((prev) => [
+        ...prev,
+        { role: 'user', content: userMessage },
+        { role: 'agent', content: agentMessage },
+      ])
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'An error occurred'
+      setError(errorMsg)
+      console.error('Agent error:', err)
+    }
+  }
+
+  const handleSendMessage = async () => {
+    if (!inputValue.trim() || isLoading) return
 
     const newUserMessage: ConversationMessage = {
       id: Date.now().toString(),
@@ -288,22 +370,12 @@ function InterviewChat({
     }
 
     setMessages((prev) => [...prev, newUserMessage])
+    const userInput = inputValue
     setInputValue('')
     setIsLoading(true)
 
-    setTimeout(() => {
-      const agentResponse: ConversationMessage = {
-        id: (Date.now() + 1).toString(),
-        sender: 'agent',
-        content:
-          'Thank you for that information. Now, let me ask about work hours and flexibility requirements. What type of work hour arrangement would you like this policy to support?',
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      }
-
-      setMessages((prev) => [...prev, agentResponse])
-      setIsLoading(false)
-      setInterviewProgress(Math.min(interviewProgress + 15, 100))
-    }, 1500)
+    await callInterviewAgent(userInput)
+    setIsLoading(false)
   }
 
   const handleGenerateDraft = () => {
@@ -324,6 +396,15 @@ function InterviewChat({
             <div className="bg-blue-600 h-2 rounded-full transition-all" style={{ width: `${interviewProgress}%` }} />
           </div>
         </div>
+
+        {/* Error Alert */}
+        {error && (
+          <Alert className="m-4 bg-red-50 border-red-200">
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+            <AlertTitle className="text-red-800">Error</AlertTitle>
+            <AlertDescription className="text-red-700">{error}</AlertDescription>
+          </Alert>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -347,11 +428,13 @@ function InterviewChat({
 
           {isLoading && (
             <div className="flex justify-start">
-              <div className="bg-gray-100 text-gray-900 px-4 py-3 rounded-lg rounded-bl-none">
+              <div className="bg-gray-100 text-gray-900 px-4 py-3 rounded-lg rounded-bl-none flex items-center gap-2">
                 <Loader className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Agent thinking...</span>
               </div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Input Area */}
@@ -369,13 +452,14 @@ function InterviewChat({
               }}
               className="resize-none"
               rows={3}
+              disabled={isLoading}
             />
             <Button onClick={handleSendMessage} disabled={!inputValue.trim() || isLoading} size="icon" className="self-end">
-              <Send className="h-4 w-4" />
+              {isLoading ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </Button>
           </div>
           {interviewProgress >= 80 && (
-            <Button onClick={handleGenerateDraft} className="w-full bg-green-600 hover:bg-green-700">
+            <Button onClick={handleGenerateDraft} className="w-full bg-green-600 hover:bg-green-700" disabled={isLoading}>
               Generate Draft
             </Button>
           )}
@@ -413,19 +497,128 @@ function InterviewChat({
   )
 }
 
-function DraftReviewScreen({ draft, onApprove, onBack }: { draft: PolicyDraft; onApprove: () => void; onBack: () => void }) {
+function DraftReviewScreen({
+  draft,
+  onApprove,
+  onBack,
+  gatheredInfo
+}: {
+  draft: PolicyDraft
+  onApprove: (finalDraft: PolicyDraft) => void
+  onBack: () => void
+  gatheredInfo: GatheredInfo
+}) {
   const [editMode, setEditMode] = useState(false)
   const [editedContent, setEditedContent] = useState(draft.content)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [updatedDraft, setUpdatedDraft] = useState<PolicyDraft>(draft)
+  const [userId] = useState(`user-${Date.now()}`)
+  const [sessionId] = useState(`session-${Date.now()}`)
+
+  const generateDraftWithCoordinator = async () => {
+    try {
+      setError(null)
+      setIsGenerating(true)
+
+      // Call Policy Generation Coordinator to orchestrate compliance research and drafting
+      const coordinatorInput = {
+        gathered_requirements: gatheredInfo,
+        policy_type: gatheredInfo.policyType || 'HR Policy',
+        jurisdiction: gatheredInfo.jurisdiction || 'United States',
+        departments: gatheredInfo.departments || 'All',
+        employee_levels: gatheredInfo.employeeLevels || 'All Levels',
+      }
+
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: JSON.stringify(coordinatorInput),
+          agent_id: AGENT_IDS.COORDINATOR,
+          user_id: userId,
+          session_id: sessionId,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to generate draft')
+      }
+
+      const agentOutput = data.response
+
+      // Extract policy draft and compliance from coordinator output
+      if (typeof agentOutput === 'object' && agentOutput.policy_draft) {
+        const complianceItems: ComplianceItem[] = []
+
+        // Extract compliance findings from coordinator
+        if (agentOutput.compliance_highlights) {
+          agentOutput.compliance_highlights.forEach((item: any) => {
+            complianceItems.push({
+              regulation: item.regulation || '',
+              requirement: item.requirement || '',
+              jurisdiction: item.jurisdiction || 'N/A',
+              status: item.status === 'compliant' ? 'compliant' : item.status === 'needs-review' ? 'needs-review' : 'non-compliant',
+              riskLevel: item.risk_level || 'low',
+            })
+          })
+        }
+
+        const newDraft: PolicyDraft = {
+          ...draft,
+          title: `${gatheredInfo.policyType || 'Policy'} - ${new Date().getFullYear()}`,
+          content: agentOutput.policy_draft,
+          compliance: complianceItems.length > 0 ? complianceItems : draft.compliance,
+        }
+
+        setUpdatedDraft(newDraft)
+        setEditedContent(newDraft.content)
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'An error occurred'
+      setError(errorMsg)
+      console.error('Draft generation error:', err)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  useEffect(() => {
+    // Auto-generate draft when component mounts
+    generateDraftWithCoordinator()
+  }, [])
 
   return (
     <div className="space-y-6">
+      {/* Loading State */}
+      {isGenerating && (
+        <Alert className="bg-blue-50 border-blue-200">
+          <Loader className="h-4 w-4 text-blue-600 animate-spin" />
+          <AlertTitle className="text-blue-800">Generating Draft</AlertTitle>
+          <AlertDescription className="text-blue-700">
+            Researching compliance requirements and generating your policy draft...
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Error Alert */}
+      {error && (
+        <Alert className="bg-red-50 border-red-200">
+          <AlertTriangle className="h-4 w-4 text-red-600" />
+          <AlertTitle className="text-red-800">Error</AlertTitle>
+          <AlertDescription className="text-red-700">{error}</AlertDescription>
+        </Alert>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-3xl font-bold">{draft.title}</h2>
-          <p className="text-gray-600 mt-1">Type: {draft.type}</p>
+          <h2 className="text-3xl font-bold">{updatedDraft.title}</h2>
+          <p className="text-gray-600 mt-1">Type: {updatedDraft.type}</p>
         </div>
-        <Badge className="bg-blue-100 text-blue-800">{draft.metadata.status}</Badge>
+        <Badge className="bg-blue-100 text-blue-800">{updatedDraft.metadata.status}</Badge>
       </div>
 
       {/* Metadata */}
@@ -434,15 +627,15 @@ function DraftReviewScreen({ draft, onApprove, onBack }: { draft: PolicyDraft; o
           <div className="grid grid-cols-3 gap-4">
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase">Effective Date</p>
-              <p className="text-sm font-medium text-gray-900 mt-1">{draft.metadata.effectiveDate}</p>
+              <p className="text-sm font-medium text-gray-900 mt-1">{updatedDraft.metadata.effectiveDate}</p>
             </div>
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase">Departments</p>
-              <p className="text-sm font-medium text-gray-900 mt-1">{draft.metadata.departments}</p>
+              <p className="text-sm font-medium text-gray-900 mt-1">{updatedDraft.metadata.departments}</p>
             </div>
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase">Word Count</p>
-              <p className="text-sm font-medium text-gray-900 mt-1">{draft.wordCount}</p>
+              <p className="text-sm font-medium text-gray-900 mt-1">{updatedDraft.wordCount}</p>
             </div>
           </div>
         </CardContent>
@@ -460,6 +653,7 @@ function DraftReviewScreen({ draft, onApprove, onBack }: { draft: PolicyDraft; o
                   size="sm"
                   onClick={() => setEditMode(!editMode)}
                   className="flex items-center gap-2"
+                  disabled={isGenerating}
                 >
                   {editMode ? (
                     <>
@@ -481,6 +675,7 @@ function DraftReviewScreen({ draft, onApprove, onBack }: { draft: PolicyDraft; o
                   value={editedContent}
                   onChange={(e) => setEditedContent(e.target.value)}
                   className="min-h-96 font-mono text-sm resize-none"
+                  disabled={isGenerating}
                 />
               ) : (
                 <div className="prose prose-sm max-w-none">
@@ -499,7 +694,7 @@ function DraftReviewScreen({ draft, onApprove, onBack }: { draft: PolicyDraft; o
               <CardDescription>Regulatory requirements check</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {draft.compliance.map((item, idx) => (
+              {updatedDraft.compliance.map((item, idx) => (
                 <div key={idx} className="pb-3 border-b last:border-0 last:pb-0">
                   <div className="flex items-start gap-2">
                     {item.status === 'compliant' && (
@@ -532,11 +727,18 @@ function DraftReviewScreen({ draft, onApprove, onBack }: { draft: PolicyDraft; o
           </Card>
 
           <div className="space-y-2">
-            <Button onClick={onApprove} className="w-full bg-green-600 hover:bg-green-700 text-base">
+            <Button
+              onClick={() => {
+                const finalDraft = { ...updatedDraft, content: editedContent }
+                onApprove(finalDraft)
+              }}
+              className="w-full bg-green-600 hover:bg-green-700 text-base"
+              disabled={isGenerating}
+            >
               <CheckCircle className="h-4 w-4 mr-2" />
               Approve & Generate Final Policy
             </Button>
-            <Button onClick={onBack} variant="outline" className="w-full">
+            <Button onClick={onBack} variant="outline" className="w-full" disabled={isGenerating}>
               Back to Interview
             </Button>
           </div>
@@ -546,17 +748,113 @@ function DraftReviewScreen({ draft, onApprove, onBack }: { draft: PolicyDraft; o
   )
 }
 
-function FinalPolicyScreen({ draft, onBackToDashboard }: { draft: PolicyDraft; onBackToDashboard: () => void }) {
+function FinalPolicyScreen({
+  draft,
+  onBackToDashboard,
+}: {
+  draft: PolicyDraft
+  onBackToDashboard: () => void
+}) {
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [finalDraft, setFinalDraft] = useState<PolicyDraft>(draft)
+  const [userId] = useState(`user-${Date.now()}`)
+  const [sessionId] = useState(`session-${Date.now()}`)
+
+  const generateFinalPolicy = async () => {
+    try {
+      setError(null)
+      setIsGenerating(true)
+
+      const finalizationInput = {
+        approved_draft: draft.content,
+        organization_context: {
+          company_name: 'Your Company',
+          industry: 'Technology',
+        },
+        policy_metadata: {
+          policy_type: draft.type,
+          effective_date: draft.metadata.effectiveDate,
+          approved_by: 'HR Director',
+        },
+        user_edits: {
+          sections_modified: ['Work Hours'],
+        },
+      }
+
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: JSON.stringify(finalizationInput),
+          agent_id: AGENT_IDS.FINALIZATION,
+          user_id: userId,
+          session_id: sessionId,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to finalize policy')
+      }
+
+      const agentOutput = data.response
+
+      // Extract finalized policy from agent output
+      if (typeof agentOutput === 'object' && agentOutput.policy_title) {
+        const finalized: PolicyDraft = {
+          ...finalDraft,
+          title: agentOutput.policy_title || draft.title,
+          content: agentOutput.formatted_content || draft.content,
+        }
+        setFinalDraft(finalized)
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'An error occurred'
+      setError(errorMsg)
+      console.error('Finalization error:', err)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  useEffect(() => {
+    generateFinalPolicy()
+  }, [])
+
   return (
     <div className="space-y-6">
+      {/* Loading State */}
+      {isGenerating && (
+        <Alert className="bg-blue-50 border-blue-200">
+          <Loader className="h-4 w-4 text-blue-600 animate-spin" />
+          <AlertTitle className="text-blue-800">Finalizing Policy</AlertTitle>
+          <AlertDescription className="text-blue-700">
+            Applying organizational branding and formatting your policy document...
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Error Alert */}
+      {error && (
+        <Alert className="bg-red-50 border-red-200">
+          <AlertTriangle className="h-4 w-4 text-red-600" />
+          <AlertTitle className="text-red-800">Error</AlertTitle>
+          <AlertDescription className="text-red-700">{error}</AlertDescription>
+        </Alert>
+      )}
+
       {/* Success Banner */}
-      <Alert className="bg-green-50 border-green-200">
-        <CheckCircle className="h-5 w-5 text-green-600" />
-        <AlertTitle className="text-green-800 font-semibold">Policy Generated Successfully</AlertTitle>
-        <AlertDescription className="text-green-700">
-          Your policy has been finalized and validated for compliance. Ready for distribution.
-        </AlertDescription>
-      </Alert>
+      {!isGenerating && !error && (
+        <Alert className="bg-green-50 border-green-200">
+          <CheckCircle className="h-5 w-5 text-green-600" />
+          <AlertTitle className="text-green-800 font-semibold">Policy Generated Successfully</AlertTitle>
+          <AlertDescription className="text-green-700">
+            Your policy has been finalized and validated for compliance. Ready for distribution.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Document Preview */}
@@ -569,13 +867,13 @@ function FinalPolicyScreen({ draft, onBackToDashboard }: { draft: PolicyDraft; o
               <div className="bg-white border-2 border-gray-300 p-8 rounded-lg min-h-96 flex flex-col justify-center">
                 <div className="space-y-6">
                   <div className="border-b pb-6">
-                    <h1 className="text-2xl font-bold text-center">{draft.title}</h1>
-                    <p className="text-center text-gray-600 mt-2">Effective Date: {draft.metadata.effectiveDate}</p>
+                    <h1 className="text-2xl font-bold text-center">{finalDraft.title}</h1>
+                    <p className="text-center text-gray-600 mt-2">Effective Date: {finalDraft.metadata.effectiveDate}</p>
                     <p className="text-center text-gray-600">Compliance Validated</p>
                   </div>
 
                   <div className="text-center">
-                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{draft.content}</p>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{finalDraft.content}</p>
                   </div>
 
                   <div className="border-t pt-6 text-center text-xs text-gray-500">
@@ -597,15 +895,15 @@ function FinalPolicyScreen({ draft, onBackToDashboard }: { draft: PolicyDraft; o
             <CardContent className="space-y-4">
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase">Policy Type</p>
-                <p className="text-sm font-medium text-gray-900 mt-1">{draft.type}</p>
+                <p className="text-sm font-medium text-gray-900 mt-1">{finalDraft.type}</p>
               </div>
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase">Effective Date</p>
-                <p className="text-sm font-medium text-gray-900 mt-1">{draft.metadata.effectiveDate}</p>
+                <p className="text-sm font-medium text-gray-900 mt-1">{finalDraft.metadata.effectiveDate}</p>
               </div>
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase">Departments</p>
-                <p className="text-sm font-medium text-gray-900 mt-1">{draft.metadata.departments}</p>
+                <p className="text-sm font-medium text-gray-900 mt-1">{finalDraft.metadata.departments}</p>
               </div>
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase">Compliance Status</p>
@@ -654,20 +952,29 @@ export default function HomePage() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [policyDraft, setPolicyDraft] = useState<PolicyDraft>(SAMPLE_DRAFT)
+  const [gatheredInfo, setGatheredInfo] = useState<GatheredInfo>({})
+  const [finalDraft, setFinalDraft] = useState<PolicyDraft>(SAMPLE_DRAFT)
 
   const handleStartPolicy = () => {
     setCurrentScreen('interview')
   }
 
   const handleGenerateDraft = (info: GatheredInfo) => {
+    setGatheredInfo(info)
     setPolicyDraft({
       ...SAMPLE_DRAFT,
       title: `${info.policyType || 'Policy'} - ${new Date().getFullYear()}`,
+      metadata: {
+        ...SAMPLE_DRAFT.metadata,
+        departments: info.departments || SAMPLE_DRAFT.metadata.departments,
+        effectiveDate: info.effectiveDate || SAMPLE_DRAFT.metadata.effectiveDate,
+      },
     })
     setCurrentScreen('draft-review')
   }
 
-  const handleApprove = () => {
+  const handleApprove = (draft: PolicyDraft) => {
+    setFinalDraft(draft)
     setCurrentScreen('final-policy')
   }
 
@@ -743,10 +1050,11 @@ export default function HomePage() {
               draft={policyDraft}
               onApprove={handleApprove}
               onBack={() => setCurrentScreen('interview')}
+              gatheredInfo={gatheredInfo}
             />
           )}
           {currentScreen === 'final-policy' && (
-            <FinalPolicyScreen draft={policyDraft} onBackToDashboard={handleBackToDashboard} />
+            <FinalPolicyScreen draft={finalDraft} onBackToDashboard={handleBackToDashboard} />
           )}
         </main>
       </div>
