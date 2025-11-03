@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { ChevronRight, Download, FileText, CheckCircle, AlertCircle, Menu, Settings, BookOpen, LayoutDashboard, Send, Loader, Edit2, Save, X, AlertTriangle } from 'lucide-react'
 
-type Screen = 'dashboard' | 'interview' | 'draft-review' | 'final-policy'
+type Screen = 'dashboard' | 'interview' | 'draft-review' | 'final-policy' | 'active-policies' | 'policy-library' | 'settings'
 
 interface PolicySession {
   id: string
@@ -190,6 +190,117 @@ const AGENT_IDS = {
   POLICY_DRAFTING: '6908ce055d0b2c24131786bf', // Policy Drafting Agent
   COORDINATOR: '6908ce4d5d0b2c24131786c1', // Policy Generation Coordinator
   FINALIZATION: '6908ce1cf6473313aec6dcb0', // Policy Finalization Agent
+}
+
+function ActivePoliciesScreen() {
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Active Policies</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {SAMPLE_POLICIES.map((policy) => (
+          <Card key={policy.id} className="hover:shadow-lg transition-shadow cursor-pointer">
+            <CardHeader>
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <CardTitle className="text-lg">{policy.title}</CardTitle>
+                  <CardDescription className="text-xs mt-1">{policy.type}</CardDescription>
+                </div>
+                <Badge
+                  variant="secondary"
+                  className={cn(
+                    'ml-2',
+                    policy.status === 'reviewing' && 'bg-blue-100 text-blue-800',
+                    policy.status === 'drafting' && 'bg-yellow-100 text-yellow-800'
+                  )}
+                >
+                  {policy.status.charAt(0).toUpperCase() + policy.status.slice(1)}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-gray-500">Updated {policy.lastUpdated}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function PolicyLibraryScreen() {
+  const completedPolicies = [
+    { id: '1', type: 'Remote Work Policy', status: 'completed', lastUpdated: '1 week ago' },
+    { id: '2', type: 'PTO Policy', status: 'completed', lastUpdated: '2 weeks ago' },
+    { id: '3', type: 'Code of Conduct', status: 'completed', lastUpdated: '3 weeks ago' },
+    { id: '4', type: 'Expense Policy', status: 'completed', lastUpdated: '1 month ago' },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Policy Library</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {completedPolicies.map((policy) => (
+          <Card key={policy.id} className="hover:shadow-lg transition-shadow cursor-pointer">
+            <CardHeader>
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <CardTitle className="text-lg">{policy.type}</CardTitle>
+                  <CardDescription className="text-xs mt-1">Completed Policy</CardDescription>
+                </div>
+                <Badge className="ml-2 bg-green-100 text-green-800">
+                  {policy.status.charAt(0).toUpperCase() + policy.status.slice(1)}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-gray-500">Updated {policy.lastUpdated}</p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="flex-1">
+                  <Download className="h-3 w-3 mr-1" />
+                  Download
+                </Button>
+                <Button variant="outline" size="sm" className="flex-1">
+                  <FileText className="h-3 w-3 mr-1" />
+                  View
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SettingsScreen() {
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Settings</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle>Organization Settings</CardTitle>
+          <CardDescription>Configure your HR policy generation preferences</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div>
+            <label className="text-sm font-semibold text-gray-700">Company Name</label>
+            <Input defaultValue="Your Company" className="mt-2" />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-gray-700">Default Jurisdiction</label>
+            <Input defaultValue="United States" className="mt-2" />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-gray-700">Industry</label>
+            <Input defaultValue="Technology" className="mt-2" />
+          </div>
+          <div className="pt-4 border-t">
+            <Button className="bg-blue-600 hover:bg-blue-700">Save Settings</Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
 }
 
 function Dashboard({ onStartPolicy }: { onStartPolicy: () => void }) {
@@ -1005,16 +1116,16 @@ export default function HomePage() {
 
         <nav className="p-4 space-y-2">
           {[
-            { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-            { id: 'policies', label: 'Active Policies', icon: FileText },
-            { id: 'library', label: 'Policy Library', icon: BookOpen },
-            { id: 'settings', label: 'Settings', icon: Settings },
+            { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
+            { id: 'active-policies' as const, label: 'Active Policies', icon: FileText },
+            { id: 'policy-library' as const, label: 'Policy Library', icon: BookOpen },
+            { id: 'settings' as const, label: 'Settings', icon: Settings },
           ].map(({ id, label, icon: Icon }) => (
             <Button
               key={id}
-              variant={currentScreen === 'dashboard' && id === 'dashboard' ? 'default' : 'ghost'}
+              variant={currentScreen === id ? 'default' : 'ghost'}
               className="w-full justify-start"
-              onClick={() => setCurrentScreen('dashboard')}
+              onClick={() => setCurrentScreen(id)}
             >
               <Icon className="h-4 w-4" />
               {sidebarOpen && <span className="ml-2">{label}</span>}
@@ -1033,6 +1144,9 @@ export default function HomePage() {
               {currentScreen === 'interview' && 'Policy Interview'}
               {currentScreen === 'draft-review' && 'Draft Review & Approval'}
               {currentScreen === 'final-policy' && 'Final Policy'}
+              {currentScreen === 'active-policies' && 'Active Policies'}
+              {currentScreen === 'policy-library' && 'Policy Library'}
+              {currentScreen === 'settings' && 'Settings'}
             </h2>
           </div>
         </header>
@@ -1040,6 +1154,9 @@ export default function HomePage() {
         {/* Screen Content */}
         <main className="flex-1 overflow-auto p-8">
           {currentScreen === 'dashboard' && <Dashboard onStartPolicy={handleStartPolicy} />}
+          {currentScreen === 'active-policies' && <ActivePoliciesScreen />}
+          {currentScreen === 'policy-library' && <PolicyLibraryScreen />}
+          {currentScreen === 'settings' && <SettingsScreen />}
           {currentScreen === 'interview' && (
             <InterviewChat
               onGenerateDraft={handleGenerateDraft}
